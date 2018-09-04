@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using NUnit.Framework;
+using System.Globalization;
 
 #pragma warning disable IDE1006 // Naming Styles for linq2db
 
@@ -32,9 +33,9 @@ namespace FastExpressionCompiler.UnitTests
                 Convert(p, to, to.GetTypeInfo().DeclaredMethods.First(x=> x.Name == "Parse" && x.GetParameters().Length==1 && x.GetParameters()[0].ParameterType == from)),
                 Constant(0));
 
-            var expr = Expression.Lambda<Func<string, int>>(body, p);
+            var expr = Lambda<Func<string, int>>(body, p);
 
-            var compiled = expr.CompileFast();
+            var compiled = expr.CompileFast(true);
 
             Assert.AreEqual(10, compiled("10"));
         }
@@ -59,12 +60,10 @@ namespace FastExpressionCompiler.UnitTests
         }
 
         interface IDataReader : IDataRecord
-        {
-        }
+        { }
 
         class DataContext : IDataContext
-        {
-        }
+        { }
 
         class QueryRunner : IQueryRunner
         {
@@ -108,7 +107,6 @@ namespace FastExpressionCompiler.UnitTests
         class MyDbNull
         {
             public static MyDbNull Value => new MyDbNull();
-
         }
 
         public enum TypeCodeEnum
@@ -121,7 +119,6 @@ namespace FastExpressionCompiler.UnitTests
 
         class InheritanceTests
         {
-            
 
             public abstract class InheritanceBase
             {
@@ -318,16 +315,11 @@ namespace FastExpressionCompiler.UnitTests
             return 0;
         }
 
-#if !LIGHT_EXPRESSION
         public static object ConvertDefault(object value, Type conversionType)
         {
             try
             {
-                return System.Convert.ChangeType(value, conversionType
-#if !NETSTANDARD1_6
-                    , Thread.CurrentThread.CurrentCulture
-#endif
-                    );
+                return System.Convert.ChangeType(value, conversionType, CultureInfo.InvariantCulture);
             }
             catch (Exception ex)
             {
@@ -397,11 +389,7 @@ namespace FastExpressionCompiler.UnitTests
                     typeof(object)),
                 typeof(object)));
 
-
-            var compiled1 = lambda.Compile();
             var compiled2 = lambda.CompileFast(true);
-
-            Assert.AreEqual("aa", compiled1());
             Assert.AreEqual("aa", compiled2());
         }
 
@@ -438,13 +426,11 @@ namespace FastExpressionCompiler.UnitTests
 
             var mapper = Lambda<Func<IQueryRunner, IDataContext, IDataReader, Expression, object[], object>>(mapperBody, a1, a2, a3, a4, a5);
 
-            var compiled1 = mapper.Compile();
             var compiled2 = mapper.CompileFast(true);
 
-            Assert.Throws<NullReferenceException>(() => compiled1(null, null, null, null, null));
             Assert.Throws<NullReferenceException>(() => compiled2(null, null, null, null, null));
         }
-#endif
+//#endif
 
         [Test]
         public void Jit_compiler_internal_limitation()
