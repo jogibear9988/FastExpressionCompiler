@@ -1246,6 +1246,9 @@ public abstract class Expression
         ElementInit(addMethod, arguments.AsReadOnlyList());
 
     [RequiresUnreferencedCode(Trimming.Message)]
+    // The outer tree still consists of LightExpression nodes. A parameter or constant
+    // may hold a System Expression<TDelegate> as runtime data; Invoke compiles that
+    // value and invokes its delegate. This does not mix System nodes into the tree.
     private static Type GetInvocationReturnType(Expression expression) =>
         expression is UnaryExpression quote && quote.NodeType == ExpressionType.Quote && quote.Operand is LambdaExpression lambda
             ? lambda.ReturnType
