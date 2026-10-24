@@ -11571,10 +11571,13 @@ namespace FastExpressionCompiler
                 !IsBracedBlockLike(nodeType);
         }
 
-        internal static Expression StripConvertRecursively(this Expression expr) =>
-            expr is UnaryExpression convert && convert.NodeType == ExpressionType.Convert
-                ? StripConvertRecursively(convert.Operand)
-                : expr;
+        [MethodImpl((MethodImplOptions)256)]
+        internal static Expression StripConvertRecursively(this Expression expr)
+        {
+            while (expr is UnaryExpression unExpr && unExpr.NodeType == ExpressionType.Convert)
+                expr = unExpr.Operand;
+            return expr;
+        }
 
         internal static bool IsComplexExpression(this Expression expr)
         {
@@ -11590,13 +11593,14 @@ namespace FastExpressionCompiler
                 | nodeType == ExpressionType.Default;
         }
 
-        internal static bool IsParamOrConstantOrDefault(this Expression expr)
-        {
-            var nodeType = StripConvertRecursively(expr).NodeType;
-            return nodeType == ExpressionType.Parameter
-                | nodeType == ExpressionType.Constant
-                | nodeType == ExpressionType.Default;
-        }
+        [MethodImpl((MethodImplOptions)256)]
+        internal static bool IsParamOrConstantOrDefault(this ExpressionType nodeType) =>
+            nodeType == ExpressionType.Parameter |
+            nodeType == ExpressionType.Constant |
+            nodeType == ExpressionType.Default;
+
+        internal static bool IsParamOrConstantOrDefault(this Expression expr) =>
+            StripConvertRecursively(expr).NodeType.IsParamOrConstantOrDefault();
 
         internal static string GetCSharpName(this MemberInfo m)
         {
