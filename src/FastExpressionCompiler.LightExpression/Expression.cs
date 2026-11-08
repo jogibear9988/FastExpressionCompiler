@@ -5707,12 +5707,22 @@ public class SwitchExpression : Expression // todo: @perf implement IArgumentPro
     [RequiresUnreferencedCode(Trimming.Message)]
     protected internal override Expression Accept(ExpressionVisitor visitor) => visitor.VisitSwitch(this);
 #endif
-    internal override SysExpr CreateSysExpression(ref SmallList<LightAndSysExpr> exprsConverted) =>
-        SysExpr.Switch(Type,
-            SwitchValue.ToExpression(ref exprsConverted),
-            DefaultBody?.ToExpression(ref exprsConverted),
-            Comparison,
-            ToSwitchCaseExpressions(_cases, ref exprsConverted));
+    internal override SysExpr CreateSysExpression(ref SmallList<LightAndSysExpr> exprsConverted)
+    {
+        var type = Type;
+        var value = SwitchValue.ToExpression(ref exprsConverted);
+        var fallback = DefaultBody?.ToExpression(ref exprsConverted);
+        var comparison = Comparison;
+        var cases = ToSwitchCaseExpressions(_cases, ref exprsConverted);
+        try { return SysExpr.Switch(type, value, fallback, comparison, cases); }
+        catch (ArgumentException)
+        {
+            Console.Error.WriteLine($"SWITCH DEBUG runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} type={type} isVoid={type == typeof(void)} value={value.Type} default={fallback?.Type} comparison={comparison} assembly={typeof(SysExpr).Assembly.Location}");
+            foreach (var c in cases)
+                Console.Error.WriteLine($"CASE body={c.Body.Type} node={c.Body.NodeType} tests={string.Join(",", c.TestValues.Select(t => t.Type.ToString()))}");
+            throw;
+        }
+    }
 
     internal static System.Linq.Expressions.SwitchCase ToSwitchCase(ref SwitchCase sw, ref SmallList<LightAndSysExpr> exprsConverted) =>
         SysExpr.SwitchCase(sw.Body.ToExpression(ref exprsConverted), ToExpressions(sw.TestValues, ref exprsConverted));
