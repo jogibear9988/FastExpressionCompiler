@@ -5714,14 +5714,16 @@ public class SwitchExpression : Expression // todo: @perf implement IArgumentPro
         var fallback = DefaultBody?.ToExpression(ref exprsConverted);
         var comparison = Comparison;
         var cases = ToSwitchCaseExpressions(_cases, ref exprsConverted);
-        try { return SysExpr.Switch(type, value, fallback, comparison, cases); }
-        catch (ArgumentException)
+        if (type == typeof(void))
         {
-            Console.Error.WriteLine($"SWITCH DEBUG runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} type={type} isVoid={type == typeof(void)} value={value.Type} default={fallback?.Type} comparison={comparison} assembly={typeof(SysExpr).Assembly.Location}");
-            foreach (var c in cases)
-                Console.Error.WriteLine($"CASE body={c.Body.Type} node={c.Body.NodeType} tests={string.Join(",", c.TestValues.Select(t => t.Type.ToString()))}");
-            throw;
+            // Make discarded results explicit for System runtimes requiring void branch bodies.
+            if (fallback != null && fallback.Type != typeof(void))
+                fallback = SysExpr.Block(typeof(void), fallback);
+            for (var i = 0; i < cases.Length; ++i)
+                if (cases[i].Body.Type != typeof(void))
+                    cases[i] = SysExpr.SwitchCase(SysExpr.Block(typeof(void), cases[i].Body), cases[i].TestValues);
         }
+        return SysExpr.Switch(type, value, fallback, comparison, cases);
     }
 
     internal static System.Linq.Expressions.SwitchCase ToSwitchCase(ref SwitchCase sw, ref SmallList<LightAndSysExpr> exprsConverted) =>
