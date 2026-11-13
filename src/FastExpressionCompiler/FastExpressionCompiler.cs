@@ -1763,6 +1763,15 @@ namespace FastExpressionCompiler
                             if (binaryExpr.Conversion != null &&
                                 (r = TryCollectInfo(ref context, Expression.Invoke(binaryExpr.Conversion, Expression.Default(binaryExpr.Conversion.Parameters[0].Type)), nestedLambda, ref rootNestedLambdas, scopeIdx)) != Result.OK)
                                 return r;
+                            if (IsCompoundArithmeticAssignment(binaryExpr.NodeType) &&
+                                (binaryExpr.Left is MemberExpression || binaryExpr.Left is IndexExpression))
+                            {
+                                var compoundRightTryCount = context.TryExpressionCount;
+                                r = TryCollectInfo(ref context, binaryExpr.Right, nestedLambda, ref rootNestedLambdas, scopeIdx);
+                                if (compoundRightTryCount != context.TryExpressionCount)
+                                    context.MarkComplexArguments(binaryExpr.Right);
+                                return r;
+                            }
                             expr = binaryExpr.Right;
                             enterable = false;
                             continue;
@@ -1851,6 +1860,16 @@ namespace FastExpressionCompiler
             context.PopBlock();
             return result;
         }
+
+        [MethodImpl((MethodImplOptions)256)]
+        private static bool IsCompoundArithmeticAssignment(ExpressionType nodeType) => nodeType is
+            ExpressionType.AddAssign or ExpressionType.AddAssignChecked or
+            ExpressionType.SubtractAssign or ExpressionType.SubtractAssignChecked or
+            ExpressionType.MultiplyAssign or ExpressionType.MultiplyAssignChecked or
+            ExpressionType.DivideAssign or ExpressionType.ModuloAssign or ExpressionType.PowerAssign or
+            ExpressionType.AndAssign or ExpressionType.OrAssign or ExpressionType.ExclusiveOrAssign or
+            ExpressionType.LeftShiftAssign or ExpressionType.RightShiftAssign;
+
 
         private static Expression CreateInlinedLambdaInvocationExpression(Args invokeArgs, LambdaExpression lambdaExpr)
         {
@@ -5309,6 +5328,37 @@ namespace FastExpressionCompiler
                         if (leftIsByAddress = context.LastEmitIsAddress)
                             EmitLoadIndirectlyByRef(il, leftType); // if the field is loaded by ref, it need to be loaded from the ref in order to do arithmetic operation on it
 
+                        var cachedRight = -1;
+                        if (right != null && (context.HasComplexArguments(right) || right.IsComplexExpression()))
+                        {
+                            // Keep the evaluation stack empty across a possible exception block in the RHS.
+                            // The target/getter has already run; save its operands rather than evaluating it again.
+                            var readValue = EmitStoreLocalVariable(il, leftType);
+                            var indexes = orLeftIndexExpr != null ? new int[indexArgCount] : null;
+                            if (indexes != null)
+                                for (var i = indexArgCount - 1; i >= 0; --i)
+                                    indexes[i] = EmitStoreLocalVariable(il, orLeftIndexExpr.GetArgument(i).Type);
+                            var target = -1;
+                            if (leftIsByAddress || objExpr != null)
+                            {
+                                var targetType = leftIsByAddress ? leftType.MakeByRefType()
+                                    : objExpr.Type.IsValueType ? objExpr.Type.MakeByRefType() : objExpr.Type;
+                                target = EmitStoreLocalVariable(il, targetType);
+                            }
+                            if (!TryEmit(right, il, ref context, rightOnlyFlags))
+                                return false;
+                            if (context.LastEmitIsAddress)
+                                EmitLoadIndirectlyByRef(il, right.Type);
+                            cachedRight = EmitStoreLocalVariable(il, right.Type);
+                            if (target != -1)
+                                EmitLoadLocalVariable(il, target);
+                            if (indexes != null)
+                                for (var i = 0; i < indexArgCount; ++i)
+                                    EmitLoadLocalVariable(il, indexes[i]);
+                            EmitLoadLocalVariable(il, readValue);
+                            context.LastEmitIsAddress = false;
+                        }
+
                         var leftIsNullable = leftType.IsNullable();
                         if (!leftIsNullable)
                         {
@@ -5324,7 +5374,7 @@ namespace FastExpressionCompiler
                             else
                             {
                                 var rightType = right.Type;
-                                if (!TryEmit(right, il, ref context, rightOnlyFlags))
+                                if (!TryEmitCachedCompoundRight(right, cachedRight, il, ref context, rightOnlyFlags))
                                     return false;
 
                                 var rightIsNullable = rightType.IsNullable();
@@ -5367,7 +5417,7 @@ namespace FastExpressionCompiler
                             {
                                 // emit the right expression immediately after the left and then just process their results
                                 var rightType = right.Type;
-                                if (!TryEmit(right, il, ref context, rightOnlyFlags))
+                                if (!TryEmitCachedCompoundRight(right, cachedRight, il, ref context, rightOnlyFlags))
                                     return false;
                                 if (context.LastEmitIsAddress)
                                     EmitLoadIndirectlyByRef(il, rightType);
@@ -5453,6 +5503,16 @@ namespace FastExpressionCompiler
 
             // Lowers `left op= right` (or `left++` / `left--` when the right is null) with the explicit or user-defined method into
             // `left = [conversion](method(left, right))` the same way as System reduces it, with the temps for the target instance and indexes to evaluate them once.
+            private static bool TryEmitCachedCompoundRight(Expression right, int cachedRight,
+                ILGenerator il, ref CompilerContext context, ParentFlags parent)
+            {
+                if (cachedRight == -1)
+                    return TryEmit(right, il, ref context, parent);
+                EmitLoadLocalVariable(il, cachedRight);
+                context.LastEmitIsAddress = false;
+                return true;
+            }
+
             private static bool TryEmitOpAssignWithMethod(Expression left, Expression right, MethodInfo method, ExpressionType arithType,
                 bool isPost, ILGenerator il, ref CompilerContext context, ParentFlags parent, LambdaExpression conversion = null)
             {
