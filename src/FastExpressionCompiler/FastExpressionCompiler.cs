@@ -890,13 +890,13 @@ namespace FastExpressionCompiler
             {
                 for (var i = 0; i < ScopedGotos.Count; ++i)
                 {
-                    var jump = ScopedGotos[i];
+                    var jump = ScopedGotos.GetSurePresentRef(i);
                     var definition = 0;
                     var count = 0;
                     var local = false;
                     for (var j = 0; j < ScopedLabels.Count; ++j)
                     {
-                        var label = ScopedLabels[j];
+                        var label = ScopedLabels.GetSurePresentRef(j);
                         if (!ReferenceEquals(label.Target, jump.Target) || ScopeInfos[label.Scope - 1].Root != ScopeInfos[jump.Scope - 1].Root)
                             continue;
                         definition = label.Scope;
@@ -933,13 +933,13 @@ namespace FastExpressionCompiler
                     return;
                 for (var i = 0; i < ExceptionGotos.Count; ++i)
                 {
-                    var jump = ExceptionGotos[i];
+                    var jump = ExceptionGotos.GetSurePresentRef(i);
                     var targetRegion = 0;
                     var definitionCount = 0;
                     for (var j = 0; j < ExceptionLabels.Count; ++j)
-                        if (ReferenceEquals(ExceptionLabels[j].Target, jump.Target))
+                        if (ReferenceEquals(ExceptionLabels.GetSurePresentRef(j).Target, jump.Target))
                         {
-                            targetRegion = ExceptionLabels[j].Region;
+                            targetRegion = ExceptionLabels.GetSurePresentRef(j).Region;
                             ++definitionCount;
                         }
                     // Undefined and multiply-defined targets need lexical label binding diagnostics.
@@ -4491,7 +4491,7 @@ namespace FastExpressionCompiler
                     if (objVar != -1)
                         EmitLoadLocalVariable(il, objVar);
                     for (var i = 0; i < count; ++i)
-                        EmitLoadLocalVariable(il, argVars[i]);
+                        EmitLoadLocalVariable(il, argVars.GetSurePresentRef(i));
                 }
                 return true;
             }
@@ -6322,7 +6322,7 @@ namespace FastExpressionCompiler
                 }
                 if (spillBounds)
                     for (var i = 0; i < boundCount; ++i)
-                        EmitLoadLocalVariable(il, boundVars[i]);
+                        EmitLoadLocalVariable(il, boundVars.GetSurePresentRef(i));
                 if (boundCount == 1)
                 {
                     var elemType = expr.Type.GetElementType();
@@ -7694,7 +7694,7 @@ namespace FastExpressionCompiler
                 if (record.Receiver != -1)
                     EmitLoadLocalVariable(il, record.Receiver);
                 for (var i = 0; i < indexCount; ++i)
-                    EmitLoadLocalVariable(il, record.Indexes[i]);
+                    EmitLoadLocalVariable(il, record.Indexes.GetSurePresentRef(i));
                 if (!EmitInstanceMethodCall(il, property.GetMethod, record.ReceiverType))
                     return false;
                 record.Value = EmitStoreLocalVariable(il, expression.Type);
@@ -7769,7 +7769,7 @@ namespace FastExpressionCompiler
                         return false;
                 }
                 for (var i = 0; i < arguments.Count; ++i)
-                    EmitLoadLocalVariable(il, arguments[i]);
+                    EmitLoadLocalVariable(il, arguments.GetSurePresentRef(i));
                 if (constructor != null)
                     il.Demit(OpCodes.Newobj, constructor);
                 else if (!EmitInstanceMethodCall(il, method, receiverType))
@@ -7781,11 +7781,11 @@ namespace FastExpressionCompiler
                 // Property-valued struct receivers remain defensive copies, as with ordinary member calls.
                 for (var i = 0; i < writebacks.Count; ++i)
                 {
-                    var record = writebacks[i];
+                    ref var record = ref writebacks.GetSurePresentRef(i);
                     if (record.Receiver != -1)
                         EmitLoadLocalVariable(il, record.Receiver);
                     for (var index = 0; index < record.Indexes.Count; ++index)
-                        EmitLoadLocalVariable(il, record.Indexes[index]);
+                        EmitLoadLocalVariable(il, record.Indexes.GetSurePresentRef(index));
                     EmitLoadLocalVariable(il, record.Value);
                     if (!EmitInstanceMethodCall(il, record.Property.SetMethod, record.ReceiverType))
                         return false;
