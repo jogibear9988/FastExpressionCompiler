@@ -2879,7 +2879,6 @@ namespace FastExpressionCompiler
                         if (pars[i].ParameterType.IsByRef && NeedsByRefWriteback(newExpr.GetArgument(i)))
                             return TryEmitCallWithWritebacks(null, newExpr.GetArgs(), null, ctor, il, ref context, parent, -1);
 
-
                     // If we have complex arguments then it is better to store them in the variables, then load them before calling ctor.
                     // Otherwise the stack may be broken by the long emit chain, and the previous argument result on stack
                     // may be hidden by the next argument interim stack additions,
@@ -5918,12 +5917,13 @@ namespace FastExpressionCompiler
             private struct ByRefWriteback
             {
                 public PropertyInfo Property;
-                public int Receiver;
                 public Type ReceiverType;
+                public int Receiver;
                 public int Value;
                 public SmallList<int, Stack8<int>, NoArrayPool<int>> Indexes;
             }
 
+            [MethodImpl((MethodImplOptions)256)]
             private static bool NeedsByRefWriteback(Expression expression)
             {
                 if (expression is MemberExpression member)
@@ -5941,16 +5941,17 @@ namespace FastExpressionCompiler
                 var indexCount = 0;
                 if (expression is MemberExpression member)
                 {
-                    if (member.Member is FieldInfo field && member.Expression != null &&
-                        member.Expression.Type.IsValueType && NeedsByRefWriteback(member.Expression))
+                    var memberReceiver = member.Expression;
+                    if (memberReceiver != null && member.Member is FieldInfo field &&
+                        memberReceiver.Type.IsValueType && NeedsByRefWriteback(memberReceiver))
                     {
-                        if (!TryEmitByRefArgument(member.Expression, argument, il, ref context, ref writebacks, false))
+                        if (!TryEmitByRefArgument(memberReceiver, argument, il, ref context, ref writebacks, false))
                             return false;
                         il.Demit(OpCodes.Ldflda, field);
                         return true;
                     }
                     property = member.Member as PropertyInfo;
-                    receiver = member.Expression;
+                    receiver = memberReceiver;
                 }
                 else if (expression is IndexExpression index && index.Indexer != null)
                 {
@@ -5998,37 +5999,39 @@ namespace FastExpressionCompiler
                 var record = new ByRefWriteback { Property = property, Receiver = -1 };
                 if (receiver != null)
                 {
-                    record.ReceiverType = receiver.Type;
-                    if (receiver.Type.IsValueType)
+                    var receiverType = receiver.Type;
+                    record.ReceiverType = receiverType;
+                    if (receiverType.IsValueType)
                     {
                         if (!TryEmitByRefArgument(receiver, argument, il, ref context, ref writebacks, false))
                             return false;
-                        record.Receiver = EmitStoreLocalVariable(il, receiver.Type.MakeByRefType());
+                        record.Receiver = EmitStoreLocalVariable(il, receiverType.MakeByRefType());
                     }
                     else
                     {
                         if (!TryEmit(receiver, il, ref context, ParentFlags.Call))
                             return false;
-                        record.Receiver = EmitStoreLocalVariable(il, receiver.Type);
+                        record.Receiver = EmitStoreLocalVariable(il, receiverType);
                     }
                 }
                 var getterParameters = property.GetMethod.GetParameters();
                 for (var i = 0; i < indexCount; ++i)
                 {
-                    if (!TryEmit(indexes.GetArgument(i), il, ref context, ParentFlags.Call, getterParameters[i].ParameterType.IsByRef ? i : -1))
+                    var parameterType = getterParameters[i].ParameterType;
+                    if (!TryEmit(indexes.GetArgument(i), il, ref context, ParentFlags.Call, parameterType.IsByRef ? i : -1))
                         return false;
-                    record.Indexes.Add(EmitStoreLocalVariable(il, getterParameters[i].ParameterType));
+                    record.Indexes.Add(EmitStoreLocalVariable(il, parameterType));
                 }
                 if (record.Receiver != -1)
                     EmitLoadLocalVariable(il, record.Receiver);
                 for (var i = 0; i < indexCount; ++i)
-                    EmitLoadLocalVariable(il, record.Indexes[i]);
+                    EmitLoadLocalVariable(il, record.Indexes.GetSurePresentRef(i));
                 if (!EmitInstanceMethodCall(il, property.GetMethod, record.ReceiverType))
                     return false;
                 record.Value = EmitStoreLocalVariable(il, expression.Type);
                 // A getter-only property supplies a temporary without a setter copyback.
                 if (copyback && property.SetMethod != null)
-                    writebacks.Add(record);
+                    writebacks.Add(in record);
                 EmitLoadLocalVariableAddress(il, record.Value);
                 return true;
             }
@@ -6041,10 +6044,10 @@ namespace FastExpressionCompiler
                 if (receiver != null)
                 {
                     if (!TryEmit(receiver, il, ref context, ParentFlags.Call |
-                        (receiver.Type.IsValueType ? ParentFlags.InstanceAccess : ParentFlags.AssignmentRightValue)))
+                        (receiverType.IsValueType ? ParentFlags.InstanceAccess : ParentFlags.AssignmentRightValue)))
                         return false;
-                    if (receiver.Type.IsValueType && !context.LastEmitIsAddress && !(receiver is PE pe && pe.IsByRef))
-                        EmitStoreAndLoadLocalVariableAddress(il, receiver.Type);
+                    if (receiverType.IsValueType && !context.LastEmitIsAddress && !(receiver is PE pe && pe.IsByRef))
+                        EmitStoreAndLoadLocalVariableAddress(il, receiverType);
                     receiverVar = EmitStoreLocalVariable(il, receiverType.IsValueType ? receiverType.MakeByRefType() : receiverType);
                 }
                 SmallList<ByRefWriteback, Stack2<ByRefWriteback>, NoArrayPool<ByRefWriteback>> writebacks = default;
@@ -6053,64 +6056,56 @@ namespace FastExpressionCompiler
                 for (var i = 0; i < parameters.Length; ++i)
                 {
                     var argument = expressions.GetArgument(i);
-                    if (parameters[i].ParameterType.IsByRef)
+                    var parameterType = parameters[i].ParameterType;
+                    if (parameterType.IsByRef)
                     {
-                        if (parameters[i].ParameterType.GetElementType() == argument.Type)
-                        {
-                            if (!TryEmitByRefArgument(argument, i, il, ref context, ref writebacks))
-                                return false;
-                        }
-                        // A wider formal reference type uses the existing typed temporary, without copyback.
-                        else if (!TryEmitCallArgument(argument, parameters[i].ParameterType, i, il, ref context, ParentFlags.Call))
+                        // Exact types keep writable storage; wider formal references use a temporary without copyback.
+                        if (!(parameterType.GetElementType() == argument.Type
+                            ? TryEmitByRefArgument(argument, i, il, ref context, ref writebacks)
+                            : TryEmitCallArgument(argument, parameterType, i, il, ref context, ParentFlags.Call)))
                             return false;
                     }
                     else if (!TryEmit(argument, il, ref context, ParentFlags.Call))
                         return false;
-                    arguments.Add(EmitStoreLocalVariable(il, parameters[i].ParameterType));
+                    arguments.Add(EmitStoreLocalVariable(il, parameterType));
                 }
+
                 if (receiverVar != -1)
                     EmitLoadLocalVariable(il, receiverVar);
                 for (var i = 0; i < arguments.Count; ++i)
-                    EmitLoadLocalVariable(il, arguments[i]);
+                    EmitLoadLocalVariable(il, arguments.GetSurePresentRef(i));
                 if (constructor != null)
                     il.Demit(OpCodes.Newobj, constructor);
                 else if (!EmitInstanceMethodCall(il, method, receiverType))
                     return false;
                 var returnType = constructor != null ? constructor.DeclaringType : method.ReturnType;
                 var result = returnType == typeof(void) ? -1 : EmitStoreLocalVariable(il, returnType);
+
                 // Copy back direct properties in argument order after normal completion.
                 // A throwing call skips copyback; a throwing setter prevents subsequent setters.
                 // Property-valued struct receivers remain defensive copies, as with ordinary member calls.
                 for (var i = 0; i < writebacks.Count; ++i)
                 {
-                    var record = writebacks[i];
+                    ref var record = ref writebacks.GetSurePresentRef(i);
                     if (record.Receiver != -1)
                         EmitLoadLocalVariable(il, record.Receiver);
                     for (var index = 0; index < record.Indexes.Count; ++index)
-                        EmitLoadLocalVariable(il, record.Indexes[index]);
+                        EmitLoadLocalVariable(il, record.Indexes.GetSurePresentRef(index));
                     EmitLoadLocalVariable(il, record.Value);
                     if (!EmitInstanceMethodCall(il, record.Property.SetMethod, record.ReceiverType))
                         return false;
                 }
-                context.LastEmitIsAddress = false;
-                if (result != -1 && !parent.IgnoresResult())
+                var useResult = result != -1 && !parent.IgnoresResult();
+                var loadAddress = useResult && !returnType.IsByRef &&
+                    (byRefIndex != -1 || returnType.IsValueType && (parent & ParentFlags.InstanceAccess) != 0);
+                if (useResult)
                 {
-                    if (returnType.IsValueType && (parent & ParentFlags.InstanceAccess) != 0)
-                    {
+                    if (loadAddress)
                         EmitLoadLocalVariableAddress(il, result);
-                        context.LastEmitIsAddress = true;
-                    }
                     else
-                    {
                         EmitLoadLocalVariable(il, result);
-                        context.LastEmitIsAddress = returnType.IsByRef;
-                    }
-                    if (byRefIndex != -1 && !returnType.IsByRef)
-                    {
-                        EmitStoreAndLoadLocalVariableAddress(il, returnType);
-                        context.LastEmitIsAddress = true;
-                    }
                 }
+                context.LastEmitIsAddress = useResult && (loadAddress || returnType.IsByRef);
                 return true;
             }
 
@@ -6134,7 +6129,6 @@ namespace FastExpressionCompiler
                 for (var i = 0; i < methodParams.Length; ++i)
                     if (methodParams[i].ParameterType.IsByRef && NeedsByRefWriteback(callExpr.GetArgument(i)))
                         return TryEmitCallWithWritebacks(objExpr, callExpr.GetArgs(), method, null, il, ref context, parent, byRefIndex);
-
 
                 var objIsValueType = false;
                 var loadObjByAddress = false;
@@ -6540,19 +6534,18 @@ namespace FastExpressionCompiler
                 if (expr.GetArgCount() != 0)
                 {
                     var useResult = parent & ~ParentFlags.IgnoreResult & ~ParentFlags.InstanceAccess;
-                    var args = invokeParameters;
                     var spillArguments = context.TryExpressionCount != 0;
                     var receiver = spillArguments ? EmitStoreLocalVariable(il, invokedExpr.Type) : -1;
                     if (spillArguments)
                     {
-                        if (!TryEmitArguments(expr.GetArgs(), args, il, ref context, useResult,
+                        if (!TryEmitArguments(expr.GetArgs(), invokeParameters, il, ref context, useResult,
                             out var argumentVariables)) return false;
                         EmitLoadLocalVariable(il, receiver);
                         EmitLoadArguments(il, ref argumentVariables);
                     }
                     else
-                        for (var i = 0; i < args.Length; ++i)
-                            if (!TryEmitCallArgument(expr.GetArgument(i), args[i].ParameterType, i, il, ref context, useResult))
+                        for (var i = 0; i < invokeParameters.Length; ++i)
+                            if (!TryEmitCallArgument(expr.GetArgument(i), invokeParameters[i].ParameterType, i, il, ref context, useResult))
                                 return false;
                 }
 

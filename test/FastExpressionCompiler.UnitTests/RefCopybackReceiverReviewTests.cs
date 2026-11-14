@@ -7,7 +7,7 @@ namespace FastExpressionCompiler.UnitTests;
 #endif
 public struct RefCopybackReceiverReviewTests : ITestX
 {
- public void Run(TestRun t) { Wider_formal_reference_with_property_copyback(t); Incoming_ref_delegate_with_property_arguments_is_a_value(t); Struct_method_results_as_owners(t); Struct_constructor_results_as_owners(t); Reference_return_method_preserves_address(t); Boxed_struct_reference_property_keeps_declared_object_storage(t); }
+ public void Run(TestRun t) { Prepared_results_can_supply_ref_argument_temporaries(t); Wider_formal_reference_with_property_copyback(t); Incoming_ref_delegate_with_property_arguments_is_a_value(t); Struct_method_results_as_owners(t); Struct_constructor_results_as_owners(t); Reference_return_method_preserves_address(t); Boxed_struct_reference_property_keeps_declared_object_storage(t); }
  public delegate int RefCall(ref int value);
  public delegate int RefInvoke(ref RefCall call, RefHolder holder);
  public sealed class RefHolder
@@ -77,6 +77,21 @@ public struct RefCopybackReceiverReviewTests : ITestX
   Check(t,E.Lambda<Func<Owner,int>>(E.Field(E.Field(result,"Field"),"Value"),p));
   Check(t,E.Lambda<Func<Owner,int>>(E.Call(E.Field(result,"Field"),typeof(Inner).GetMethod(nameof(Inner.Mutate))),p));
   Check(t,E.Lambda<Func<Owner,int>>(E.Field(E.Property(result,"Property"),"Value"),p));
+ }
+ public static int MutateOuter(ref Outer value) => ++value.Field.Value;
+ public static object ObjectResult(ref int value) { ++value; return new Inner { Value = 7 }; }
+ public void Prepared_results_can_supply_ref_argument_temporaries(TestContext t)
+ {
+  var p = E.Parameter(typeof(Owner));
+  var property = E.Property(p, nameof(Owner.Value));
+  var structure = E.Call(M(nameof(StructResult)), property);
+  var reference = E.Call(M(nameof(ObjectResult)), property);
+  foreach (var discard in new[] { false, true })
+  foreach (var call in new[] { E.Call(M(nameof(MutateOuter)), structure), E.Call(M(nameof(ReplaceBox)), reference) })
+  {
+   var body = discard ? (System.Linq.Expressions.Expression)E.Block(call, E.Constant(8)) : call;
+   Check(t, E.Lambda<Func<Owner, int>>(body, p));
+  }
  }
  public void Struct_method_results_as_owners(TestContext t)=>Owners(t,false);
  public void Struct_constructor_results_as_owners(TestContext t)=>Owners(t,true);
