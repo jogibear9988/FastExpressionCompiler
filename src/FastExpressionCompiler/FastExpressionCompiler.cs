@@ -5326,10 +5326,13 @@ namespace FastExpressionCompiler
                             // Keep the evaluation stack empty across a possible exception block in the RHS.
                             // The target/getter has already run; save its operands rather than evaluating it again.
                             var readValue = EmitStoreLocalVariable(il, leftType);
-                            var indexes = orLeftIndexExpr != null ? new int[indexArgCount] : null;
-                            if (indexes != null)
+                            SmallList<int, Stack4<int>, NoArrayPool<int>> indexes = default;
+                            if (orLeftIndexExpr != null)
+                            {
+                                indexes.InitCount(indexArgCount);
                                 for (var i = indexArgCount - 1; i >= 0; --i)
-                                    indexes[i] = EmitStoreLocalVariable(il, orLeftIndexExpr.GetArgument(i).Type);
+                                    indexes.GetSurePresentRef(i) = EmitStoreLocalVariable(il, orLeftIndexExpr.GetArgument(i).Type);
+                            }
                             var target = -1;
                             if (leftIsByAddress || objExpr != null)
                             {
@@ -5344,9 +5347,8 @@ namespace FastExpressionCompiler
                             cachedRight = EmitStoreLocalVariable(il, right.Type);
                             if (target != -1)
                                 EmitLoadLocalVariable(il, target);
-                            if (indexes != null)
-                                for (var i = 0; i < indexArgCount; ++i)
-                                    EmitLoadLocalVariable(il, indexes[i]);
+                            for (var i = 0; i < indexes.Count; ++i)
+                                EmitLoadLocalVariable(il, indexes.GetSurePresentRef(i));
                             EmitLoadLocalVariable(il, readValue);
                             context.LastEmitIsAddress = false;
                         }

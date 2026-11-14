@@ -13,6 +13,7 @@ public struct CompoundAssignmentExceptionRegressionTests : ITestX
     public void Run(TestRun t)
     {
         Nullable_targets_accept_exception_block_rhs(t);
+        Array_index_spills_preserve_order_at_each_supported_rank(t);
 
         Throwing_rhs_runs_finally_without_writeback(t);
     }
@@ -64,6 +65,49 @@ public struct CompoundAssignmentExceptionRegressionTests : ITestX
             t.AreEqual(kind == "array" || kind == "matrix" ? 0 : 1, receivers);
             t.AreEqual(kind == "field" || kind == "property" ? 0 : 1, indexes);
             if (kind == "property" || kind == "index") { t.AreEqual(1, box.Gets); t.AreEqual(1, box.Sets); }
+        }
+    }
+
+    public void Array_index_spills_preserve_order_at_each_supported_rank(TestContext t)
+    {
+        foreach (var rank in new[] { 1, 2, 3, 4 })
+        foreach (var discard in new[] { false, true })
+        {
+            var lengths = new int[rank];
+            var positions = new int[rank];
+            var arguments = new System.Linq.Expressions.Expression[rank];
+            var trace = new List<string>();
+            var expectedTrace = new List<string> { "receiver" };
+            for (var i = 0; i < rank; ++i)
+            {
+                lengths[i] = 3;
+                positions[i] = (i + 1) % 3;
+                var index = i;
+                Func<int> getIndex = () => { trace.Add("i" + index); return positions[index]; };
+                arguments[i] = SysExpr.Invoke(SysExpr.Constant(getIndex));
+                expectedTrace.Add("i" + i);
+            }
+            var array = Array.CreateInstance(typeof(int), lengths);
+            Func<Array> receiver = () => { trace.Add("receiver"); return array; };
+            Func<int> rhs = () => { trace.Add("rhs"); return 3; };
+            Action cleanup = () => trace.Add("finally");
+            var target = SysExpr.ArrayAccess(SysExpr.Convert(SysExpr.Invoke(SysExpr.Constant(receiver)), array.GetType()), arguments);
+            var assignment = SysExpr.AddAssign(target,
+                SysExpr.TryFinally(SysExpr.Invoke(SysExpr.Constant(rhs)), SysExpr.Invoke(SysExpr.Constant(cleanup))));
+            var body = discard ? (System.Linq.Expressions.Expression)SysExpr.Block(assignment, SysExpr.Constant(7)) : assignment;
+            var tree = SysExpr.Lambda<Func<int>>(body);
+            var fast = tree.FromSysExpression().CompileFast(true);
+            if (!t.IsNotNull(fast)) return;
+            expectedTrace.Add("rhs");
+            expectedTrace.Add("finally");
+            foreach (var compiled in new[] { tree.Compile(), fast })
+            {
+                array.SetValue(5, positions);
+                trace.Clear();
+                t.AreEqual(discard ? 7 : 8, compiled());
+                t.AreEqual(8, (int)array.GetValue(positions));
+                t.AreEqual(string.Join(",", expectedTrace), string.Join(",", trace));
+            }
         }
     }
 
