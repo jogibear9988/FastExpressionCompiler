@@ -2188,10 +2188,8 @@ namespace FastExpressionCompiler
 
                 if (catchBlock.Filter != null)
                 {
-                    var filterScopeIdx = (short)context.Scopes.Add(new LabelScope
-                    {
-                        Parent = new ScopeIdx(scopeIdx, false), ExceptionRegion = ExceptionRegion.Filter
-                    });
+                    var labelScope = new LabelScope { Parent = new ScopeIdx(scopeIdx, false), ExceptionRegion = ExceptionRegion.Filter };
+                    var filterScopeIdx = (short)context.Scopes.Add(in labelScope);
                     context.InExceptionFilter = true;
                     r = TryCollectInfo(ref context, catchBlock.Filter, nestedLambda, ref rootNestedLambdas, filterScopeIdx);
                     context.InExceptionFilter = false;
